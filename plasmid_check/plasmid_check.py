@@ -1,3 +1,149 @@
+from dataclasses import dataclass
+from Bio import SeqIO
+from Bio.Seq import Seq
+from biotite import sequence as bioseq
+import biotite.sequence.align as bioalign
+import biotite.sequence.graphics as graphics
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from tqdm import tqdm
+
+
+@dataclass
+class MisMatch:
+    """Class for mismatches between two sequences."""
+
+    seq1_pos: int  # 0-based nucleotide position
+    ref_nt: str  # Reference nucleotide/codon
+    alt_nt: str  # Sample nucleotide/codon
+    region: str  # 'Target Gene' or 'Backbone'
+    aa_pos: int = None  # 1-based AA residue relative to gene start
+    ref_aa: str = None  # Reference amino acid
+    alt_aa: str = None  # Sample amino acid
+
+
+def parse_fasta(fasta_file):
+    """Read a fasta file and return a pandas dataframe."""
+    records = SeqIO.parse(fasta_file, "fasta")
+    df = pd.DataFrame(columns=["seq"])
+    for record in records:
+        df.loc[record.id] = [str(record.seq)]
+    return df
+
+
+def pairwise_dna(seq1, seq2, type="local", gap_penalty=-10):
+    """Pairwise alignment of two DNA sequences."""
+    seq1 = bioseq.NucleotideSequence(seq1)
+    seq2 = bioseq.NucleotideSequence(seq2)
+    matrix = bioalign.SubstitutionMatrix.std_nucleotide_matrix()
+    local = True if type == "local" else False
+    ali = bioalign.align_optimal(
+        seq1,
+        seq2,
+        matrix,
+        local=local,
+        gap_penalty=gap_penalty,
+    )[0]
+    return ali
+
+
+def compare_sequences(
+    seq1, seq2, alignment, target_start=None, target_end=None
+):
+    """Compare two sequences nucleotide-by-nucleotide and codon-by-codon."""
+    mismatches = []
+    seq1_ali_end = alignment.trace[-1][0]
+
+    # Map trace to numpy arrays for direct lookups
+    trace_seq1 = alignment.trace[:, 0]
+    trace_seq2 = alignment.trace[:, 1]
+
+    for idx, (seq1_i, seq2_i) in enumerate(alignment.trace):
+        if seq1_i == -1 or seq2_i == -1:
+            continue  # Skip unaligned terminal regions or insertions/deletions for simple SNP checks
+
+        ref_nt = seq1[seq1_i]
+        alt_nt = seq2[seq2_i]
+
+        if ref_nt != alt_nt:
+            pos_1based = seq1_i + 1
+
+            # Check if nucleotide falls within Target Gene boundaries
+            is_target = False
+            if target_start and target_end and target_start > 0:
+                if target_start <= target_end:
+                    is_target = target_start <= pos_1based <= target_end
+                else:
+                    is_target = (
+                        pos_1based >= target_start or pos_1based <= target_end
+                    )
+
+            if is_target:
+                # Target Gene Logic: Codon & Amino Acid position relative to target_start
+                gene_nt_offset = pos_1based - target_start
+                codon_start_pos = (
+                    target_start - 1 + (gene_nt_offset // 3) * 3
+                )
+                aa_residue_num = (gene_nt_offset // 3) + 1
+
+                # Extract codon triplet if available within alignment
+                if codon_start_pos + 3 <= len(seq1):
+                    ref_codon = seq1[codon_start_pos : codon_start_pos + 3]
+
+                    # Map corresponding sample nucleotides for this triplet
+                    alt_codon_chars = []
+                    for p in range(
+                        codon_start_pos, codon_start_pos + 3
+                    ):
+                        matches = np.where(trace_seq1 == p)[0]
+                        if len(matches) > 0 and trace_seq2[matches[0]] != -1:
+                            alt_codon_chars.append(seq2[trace_seq2[matches[0]]])
+                        else:
+                            alt_codon_chars.append("-")
+                    alt_codon = "".join(alt_codon_chars)
+
+                    ref_aa = (
+                        str(Seq(ref_codon).translate())
+                        if "-" not in ref_codon
+                        else "-"
+                    )
+                    alt_aa = (
+                        str(Seq(alt_codon).translate())
+                        if "-" not in alt_codon
+                        else "-"
+                    )
+
+                    # Deduplicate if codon mismatch was already processed
+                    if not any(
+                        m.seq1_pos == codon_start_pos
+                        and m.region == "Target Gene"
+                        for m in mismatches
+                    ):
+                        mismatches.append(
+                            MisMatch(
+                                seq1_pos=codon_start_pos,
+                                ref_nt=ref_codon,
+                                alt_nt=alt_codon,
+                                region="Target Gene",
+                                aa_pos=aa_residue_num,
+                                ref_aa=ref_aa,
+                                alt_aa=alt_aa,
+                            )
+                        )
+            else:
+                # Backbone Logic: Individual Nucleotide Mismatches
+                mismatches.append(
+                    MisMatch(
+                        seq1_pos=seq1_i,
+                        ref_nt=ref_nt,
+                        alt_nt=alt_nt,
+                        region="Backbone",
+                    )
+                )
+
+    return mismatches
+
 def check_sanger_sequence(
     dna_seq_name,
     dna_seq,
