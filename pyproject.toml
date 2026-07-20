@@ -3,12 +3,12 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "sanger_check"
+name = "plasmid_check"
 version = "0.0.1"
-description = "Utilities for checking Sanger sequencing results"
+description = "Utilities for checking whole plasmid sequencing results"
 readme = "README.md"
 authors = [
-  { name="Azam Hussain", email="azamh@umich.edu" },
+  { name="Chang-Hwa Chiang", email="cdchiang@umich.edu" },
 ]
 requires-python = ">=3.7"
 classifiers = [
