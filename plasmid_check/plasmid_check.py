@@ -48,6 +48,71 @@ def pairwise_dna(seq1, seq2, type="local", gap_penalty=-10):
     return ali
 
 
+def auto_assign(sanger_df, dna_df, gap_penalty=-10):
+    """Auto assign sanger sequences to reference sequences.
+
+    Args:
+        sanger_df (pd.DataFrame): Dataframe of sanger sequences.
+        dna_df (pd.DataFrame): Dataframe of reference sequences.
+
+        DataFrames must have a column named "seq" with the sequence and index of
+            the DataFrame must be the sequence name.
+
+    Returns:
+        data_df: Dataframe with sanger sequences assigned to reference sequences.
+    """
+    # Auto assign sanger sequences to reference sequences
+
+    score_df = pd.DataFrame(columns=["sanger_seq", "dna_seq", "score", "orientation"])
+
+    # Compute pairwise scores for all sanger sequences against all dna sequences
+
+    for sanger_seq_name in (pbar := tqdm(sanger_df.index)):
+        sanger_seq = sanger_df.loc[sanger_seq_name, "seq"]
+        rev_sanger_seq = str(Seq(sanger_seq).reverse_complement())
+        for dna_seq_name in dna_df.index:
+            dna_seq = dna_df.loc[dna_seq_name, "seq"]
+
+            pbar.set_description(f"Checking {sanger_seq_name} against {dna_seq_name}")
+            alignment = pairwise_dna(sanger_seq, dna_seq, gap_penalty=gap_penalty)
+            rev_alignment = pairwise_dna(
+                rev_sanger_seq, dna_seq, gap_penalty=gap_penalty
+            )
+            score = max(alignment.score, rev_alignment.score)
+            orientation = (
+                "forward" if alignment.score > rev_alignment.score else "reverse"
+            )
+
+            score_df.loc[len(score_df)] = [
+                sanger_seq_name,
+                dna_seq_name,
+                score,
+                orientation,
+            ]
+
+    # Assign sanger sequences to dna sequences
+    data_df = pd.DataFrame(columns=["dna_seq", "orientation"])
+    for sanger_seq_name in score_df["sanger_seq"].unique():
+        # Get best dna sequence
+        best_dna_seq = (
+            score_df[score_df["sanger_seq"] == sanger_seq_name]
+            .sort_values("score", ascending=False)
+            .iloc[0]["dna_seq"]
+        )
+
+        # Get orientation
+        orientation = (
+            score_df[score_df["sanger_seq"] == sanger_seq_name]
+            .sort_values("score", ascending=False)
+            .iloc[0]["orientation"]
+        )
+
+        # Add to data dict
+        data_df.loc[sanger_seq_name] = [best_dna_seq, orientation]
+
+    return data_df
+
+
 def compare_sequences(
     seq1, seq2, alignment, target_start=None, target_end=None
 ):
