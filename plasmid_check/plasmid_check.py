@@ -309,7 +309,10 @@ def check_sanger_sequence(
         std_matrix = bioalign.SubstitutionMatrix.std_nucleotide_matrix()
         alphabet_1 = std_matrix.get_alphabet1()
         alphabet_2 = std_matrix.get_alphabet2()
-        score_matrix = np.ones((len(alphabet_1), len(alphabet_2)))
+        # FIX: Explicitly specify integer dtype
+        score_matrix = np.ones(
+            (len(alphabet_1), len(alphabet_2)), dtype=np.int32
+        )
 
         for i in range(4):
             for j in range(4):
